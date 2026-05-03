@@ -1,0 +1,24 @@
+name: vllm-cuda121
+channels:
+  - pytorch
+  - nvidia
+  - defaults
+  - conda-forge
+
+dependencies:
+  - python=3.10
+  - pip
+  - "setuptools<81"
+  - cmake
+  - ninja
+  - git
+
+  - pip:
+      - packaging
+      - sortedcontainers
+      - pandas
+      - sentence-transformers
+      - datasets
+      - "transformers>=4.48.2"
+      - "tokenizers>=0.19.1"
+      - matplotlib
