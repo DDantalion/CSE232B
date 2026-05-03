@@ -1,7 +1,7 @@
 # Setup
 
 ## Cloud Machine Recommendation
-**We recommend using a cloud machine with high-performance GPUs for running these experiments.** We use **Hyperstack H100** for optimal performance. Other cloud options include:
+**We recommend using a cloud machine with high-performance GPUs for running these experiments.** We use **[Hyperstack H100](https://console.hyperstack.cloud/deploy-virtual-machine)** for optimal performance. Other cloud options include:
 - AWS EC2 (Deep Learning Base OSS Nvidia Driver GPU AMI - Ubuntu 24.04)
 - Google Cloud Platform with A100/H100 GPUs
 - Lambda Labs
