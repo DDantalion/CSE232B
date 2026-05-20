@@ -54,6 +54,12 @@ async def main(sizes, scales, alg, _dataset, tag):
             'use_oracle': 0,
             'use_token_id': 0,
             'algorithm': 'lru'
+        },
+        {
+            'num_prompts': 30000,
+            'use_oracle': 0,
+            'use_token_id': 0,
+            'algorithm': 'rrip'
         }
     ]
 
@@ -148,6 +154,7 @@ async def main(sizes, scales, alg, _dataset, tag):
         use_oracle = client_config['use_oracle'] if 'use_oracle' in client_config else 0
         use_token_id = client_config['use_token_id'] if 'use_token_id' in client_config else 0
         use_lru = 1 if 'lru' in client_config['algorithm'] else 0
+        use_rrip = 1 if 'rrip' in client_config['algorithm'] else 0
         prefix = f"{server_config['port']}_{client_config['algorithm']}"
         result_filename = f"{_dataset}-{tag}/client_logs/{prefix}.json"
         
@@ -163,7 +170,8 @@ async def main(sizes, scales, alg, _dataset, tag):
         client_cmd = CLIENT_CMD_TEMPLATE.format(
             client_config['dataset_file'], 'conversation', host, 
             port, result_filename, num_prompts, request_rate, session_rate,
-            checkpoint, use_oracle, use_token_id, use_lru, max_active_conversations,
+            checkpoint, use_oracle, use_token_id, use_lru, use_rrip,
+            max_active_conversations,
             time_limit
         )
         client_cmd = f'{server_config["cuda_devices"]} {client_cmd}'

@@ -403,7 +403,8 @@ async def benchmark(
                                               checkpoint=args.checkpoint,
                                               use_oracle=args.use_oracle,
                                               use_token_id=args.use_token_id,
-                                              use_lru=args.use_lru)
+                                              use_lru=args.use_lru,
+                                              use_rrip=args.use_rrip)
         tasks.append(
             asyncio.create_task(
                 limited_request_func(request_func_input=request_func_input,
@@ -818,6 +819,11 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--use-lru",
+        type=int,
+        default=0,
+    )
+    parser.add_argument(
+        "--use-rrip",
         type=int,
         default=0,
     )

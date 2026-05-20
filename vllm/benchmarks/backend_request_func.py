@@ -62,6 +62,7 @@ class RequestFuncInput:
     use_oracle: float = 0
     use_token_id: int = 0
     use_lru: int = 0
+    use_rrip: int = 0
 
 
 @dataclass
@@ -476,7 +477,7 @@ async def async_request_openai_chat_completions(
         turns = request_func_input.turn_id
         true_label = (request_func_input.next_timestamp < 1e8)
         prob_has_next = -1
-        if request_func_input.use_lru:
+        if request_func_input.use_lru or request_func_input.use_rrip:
             prob_has_next = 1
         # oracle
         if request_func_input.use_oracle > 0:
@@ -506,6 +507,8 @@ async def async_request_openai_chat_completions(
             hint["next_timestamp"] = request_func_input.next_timestamp
         if request_func_input.use_lru:
             hint['use_lru'] = 1
+        if request_func_input.use_rrip:
+            hint['use_rrip'] = 1
         return hint
     
     def update_conversation(conversation_id, generated_text, generated_tokens):

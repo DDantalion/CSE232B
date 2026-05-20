@@ -121,12 +121,16 @@ class BlockMetaData:
         self.score = score
 
 class LRUMLEvictor(Evictor):
+    RRIP_MAX_RRPV = 3
+    RRIP_INSERT_RRPV = RRIP_MAX_RRPV - 1
+    RRIP_HIT_RRPV = 0
 
     def __init__(self, config):
         self.free_table: Dict[int, BlockMetaData] = {}
         self.sorted_dict = SortedDict()
         self.id_to_last_access = {}
         self.id_to_first_access = {}
+        self.rrip_values = {}
         self.to_delete_blocks = []
         self.config = self.parse_str_to_dict(config)
         self.stat = CacheStat()
@@ -142,6 +146,9 @@ class LRUMLEvictor(Evictor):
         return {key: value for key, value in (pair.split("=", 1) for pair in s.split(","))}
 
     def calc_score(self, block_id, last_accessed, cache_hint):
+        if 'use_rrip' in cache_hint and cache_hint['use_rrip']:
+            rrpv = self.rrip_values.get(block_id, self.RRIP_INSERT_RRPV)
+            return -rrpv
         if 'use_lru' in cache_hint and cache_hint['use_lru']:
             return last_accessed
         if 'use_fifo' in cache_hint and cache_hint['use_fifo']:
@@ -167,6 +174,9 @@ class LRUMLEvictor(Evictor):
         if block_id in self.free_table:
             survival_time = time.time() - self.free_table[block_id].last_accessed
             self.stat.append("survival_times", survival_time)
+            if (self.free_table[block_id].cache_hint is not None and
+                    self.free_table[block_id].cache_hint.get('use_rrip')):
+                self.rrip_values.pop(block_id, None)
             del self.free_table[block_id]
             del self.id_to_first_access[block_id]
             return block_id, content_hash
@@ -176,6 +186,8 @@ class LRUMLEvictor(Evictor):
     
     def add(self, block_id: int, content_hash: int, num_hashed_tokens: int,
             last_accessed: float, cache_hint: dict):
+        if cache_hint.get('use_rrip') and block_id not in self.rrip_values:
+            self.rrip_values[block_id] = self.RRIP_INSERT_RRPV
         score = self.calc_score(block_id, last_accessed, cache_hint)
         # print("add: ", block_id, cache_hint)
         self.free_table[block_id] = BlockMetaData(content_hash,
@@ -202,6 +214,9 @@ class LRUMLEvictor(Evictor):
             raise ValueError("the score is not found in sorted_dict")
         
         score = self.calc_score(block_id, last_accessed, cache_hint)
+        if cache_hint.get('use_rrip'):
+            self.rrip_values[block_id] = self.RRIP_HIT_RRPV
+            score = self.calc_score(block_id, last_accessed, cache_hint)
         self.free_table[block_id].last_accessed = last_accessed
         self.free_table[block_id].cache_hint = cache_hint
         self.free_table[block_id].score = score
@@ -216,6 +231,9 @@ class LRUMLEvictor(Evictor):
         
         # print("remove: ", block_id)
         old_score = self.free_table[block_id].score
+        if (self.free_table[block_id].cache_hint is not None and
+                self.free_table[block_id].cache_hint.get('use_rrip')):
+            self.rrip_values[block_id] = self.RRIP_HIT_RRPV
         old_entry = (old_score, self.free_table[block_id].last_accessed, block_id)
         if old_entry in self.sorted_dict:
             del self.sorted_dict[old_entry]
