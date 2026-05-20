@@ -145,40 +145,101 @@ class LRUMLEvictor(Evictor):
             return {}
         return {key: value for key, value in (pair.split("=", 1) for pair in s.split(","))}
 
+    def get_policy(self, cache_hint: dict) -> str:
+        if cache_hint is None:
+            return 'lru'
+        if cache_hint.get('use_rrip'):
+            return 'rrip'
+        if cache_hint.get('use_lru'):
+            return 'lru'
+        if cache_hint.get('use_fifo'):
+            return 'fifo'
+        if 'next_timestamp' in cache_hint:
+            return 'belady'
+        return 'ml'
+
     def calc_score(self, block_id, last_accessed, cache_hint):
-        if 'use_rrip' in cache_hint and cache_hint['use_rrip']:
+        policy = self.get_policy(cache_hint)
+        if policy == 'rrip':
             rrpv = self.rrip_values.get(block_id, self.RRIP_INSERT_RRPV)
             return -rrpv
-        if 'use_lru' in cache_hint and cache_hint['use_lru']:
+        if policy == 'lru':
             return last_accessed
-        if 'use_fifo' in cache_hint and cache_hint['use_fifo']:
+        if policy == 'fifo':
             return self.id_to_first_access[block_id]
-        if 'next_timestamp' in cache_hint:
+        if policy == 'belady':
             return -cache_hint['next_timestamp']
         if 'prob_has_next' in cache_hint:
             prob = probability_of_future_arrival(
                 cache_hint['prob_has_next'], cache_hint['exp_scale'], time.time() - last_accessed)
             return prob
+        return last_accessed
+
+    def _rebuild_sorted_dict(self):
+        new_sorted_dict = SortedDict()
+        for block_id, block in self.free_table.items():
+            score = self.calc_score(block_id, block.last_accessed,
+                                    block.cache_hint)
+            block.score = score
+            new_sorted_dict[(score, block.last_accessed, block_id)] = (
+                block_id, block.content_hash)
+        self.sorted_dict = new_sorted_dict
+
+    def _age_rrip_blocks(self):
+        for block_id, block in self.free_table.items():
+            if self.get_policy(block.cache_hint) != 'rrip':
+                continue
+            rrpv = self.rrip_values.get(block_id, self.RRIP_INSERT_RRPV)
+            self.rrip_values[block_id] = min(self.RRIP_MAX_RRPV, rrpv + 1)
+        self._rebuild_sorted_dict()
+
+    def _peek_valid_candidate(self):
+        while self.sorted_dict:
+            key, (block_id, content_hash) = self.sorted_dict.peekitem(0)
+            if (block_id in self.free_table and
+                    self.free_table[block_id].score == key[0] and
+                    self.free_table[block_id].last_accessed == key[1]):
+                return block_id, content_hash
+            self.sorted_dict.popitem(0)
+        return None
+
+    def _remove_from_sorted_dict(self, block_id: int):
+        block = self.free_table[block_id]
+        entry = (block.score, block.last_accessed, block_id)
+        if entry in self.sorted_dict:
+            del self.sorted_dict[entry]
+        else:
+            raise ValueError("the score is not found in sorted_dict")
 
     def evict(self) -> Tuple[int, int]:
         if len(self.free_table) == 0:
             raise ValueError("No usable cache memory left")
-        block_id = -1
-        while block_id not in self.free_table:
+        while True:
             if len(self.to_delete_blocks) > 0:
                 (block_id, content_hash, last_accessed) = self.to_delete_blocks.pop()
                 if block_id not in self.free_table or self.free_table[block_id].last_accessed != last_accessed:
                     continue
+                break
             else:
-                _, (block_id, content_hash) = self.sorted_dict.popitem(0)
+                candidate = self._peek_valid_candidate()
+                if candidate is None:
+                    raise ValueError("No usable cache memory left")
+                block_id, content_hash = candidate
+                if self.get_policy(self.free_table[block_id].cache_hint) == 'rrip':
+                    rrpv = self.rrip_values.get(block_id,
+                                                self.RRIP_INSERT_RRPV)
+                    if rrpv < self.RRIP_MAX_RRPV:
+                        self._age_rrip_blocks()
+                        continue
+                self._remove_from_sorted_dict(block_id)
+                break
         if block_id in self.free_table:
             survival_time = time.time() - self.free_table[block_id].last_accessed
             self.stat.append("survival_times", survival_time)
-            if (self.free_table[block_id].cache_hint is not None and
-                    self.free_table[block_id].cache_hint.get('use_rrip')):
+            if self.get_policy(self.free_table[block_id].cache_hint) == 'rrip':
                 self.rrip_values.pop(block_id, None)
             del self.free_table[block_id]
-            del self.id_to_first_access[block_id]
+            self.id_to_first_access.pop(block_id, None)
             return block_id, content_hash
         else:
             # print('block is not in the sorted_dict')
@@ -186,7 +247,7 @@ class LRUMLEvictor(Evictor):
     
     def add(self, block_id: int, content_hash: int, num_hashed_tokens: int,
             last_accessed: float, cache_hint: dict):
-        if cache_hint.get('use_rrip') and block_id not in self.rrip_values:
+        if self.get_policy(cache_hint) == 'rrip' and block_id not in self.rrip_values:
             self.rrip_values[block_id] = self.RRIP_INSERT_RRPV
         score = self.calc_score(block_id, last_accessed, cache_hint)
         # print("add: ", block_id, cache_hint)
@@ -206,17 +267,11 @@ class LRUMLEvictor(Evictor):
         if block_id not in self.free_table:
             raise ValueError("Attempting to update block that's not in the evictor")
         print("update: ", block_id, cache_hint['turns'])
-        old_score = self.free_table[block_id].score
-        old_entry = (old_score, self.free_table[block_id].last_accessed, block_id)
-        if old_entry in self.sorted_dict:
-            del self.sorted_dict[old_entry]
-        else:
-            raise ValueError("the score is not found in sorted_dict")
+        self._remove_from_sorted_dict(block_id)
         
-        score = self.calc_score(block_id, last_accessed, cache_hint)
-        if cache_hint.get('use_rrip'):
+        if self.get_policy(cache_hint) == 'rrip':
             self.rrip_values[block_id] = self.RRIP_HIT_RRPV
-            score = self.calc_score(block_id, last_accessed, cache_hint)
+        score = self.calc_score(block_id, last_accessed, cache_hint)
         self.free_table[block_id].last_accessed = last_accessed
         self.free_table[block_id].cache_hint = cache_hint
         self.free_table[block_id].score = score
@@ -230,15 +285,9 @@ class LRUMLEvictor(Evictor):
             raise ValueError("Attempting to remove block that's not in the evictor")
         
         # print("remove: ", block_id)
-        old_score = self.free_table[block_id].score
-        if (self.free_table[block_id].cache_hint is not None and
-                self.free_table[block_id].cache_hint.get('use_rrip')):
+        if self.get_policy(self.free_table[block_id].cache_hint) == 'rrip':
             self.rrip_values[block_id] = self.RRIP_HIT_RRPV
-        old_entry = (old_score, self.free_table[block_id].last_accessed, block_id)
-        if old_entry in self.sorted_dict:
-            del self.sorted_dict[old_entry]
-        else:
-            raise ValueError("the score is not found in sorted_dict")
+        self._remove_from_sorted_dict(block_id)
         del self.free_table[block_id]
 
     @property
@@ -246,14 +295,7 @@ class LRUMLEvictor(Evictor):
         return len(self.free_table)
 
     def _refresh(self):
-        new_sorted_dict = SortedDict()
-
-        for block_id, block in self.free_table.items():
-            score = self.calc_score(block_id, block.last_accessed, block.cache_hint)
-            block.score = score
-            new_sorted_dict[(score, block.last_accessed, block_id)] = (block_id, block.content_hash)
-
-        self.sorted_dict = new_sorted_dict
+        self._rebuild_sorted_dict()
 
         print('num blocks: ', self.num_blocks)
 
@@ -271,6 +313,8 @@ class LRUMLEvictor(Evictor):
         to_delete_cnt = 0
         for block_id, _, _ in survival_list:
             block = self.free_table[block_id]
+            if self.get_policy(block.cache_hint) == 'rrip':
+                continue
             id = block.cache_hint['id']
             if self.id_to_last_access[id] == block.last_accessed:
                 continue
