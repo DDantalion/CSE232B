@@ -30,7 +30,8 @@ CLIENT_CMD_TEMPLATE = (
     f"--save-result --model {MODEL} --endpoint /v1/chat/completions "
     "--dataset-path {} --dataset-name {}  --host {} --port {} "
     "--result-filename {} --num-prompts {} --request-rate {} --session-rate {} "
-    "--checkpoint {} --use-oracle {} --use-token-id {} --use-lru {} --use-rrip {} "
+    "--checkpoint {} --use-oracle {} --use-token-id {} --use-lru {} "
+    "--use-rrip {} --use-fifo {} "
     "--max-active-conversations {} "
     "--time-limit {} "
 )

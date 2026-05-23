@@ -249,6 +249,8 @@ class LRUMLEvictor(Evictor):
             last_accessed: float, cache_hint: dict):
         if self.get_policy(cache_hint) == 'rrip' and block_id not in self.rrip_values:
             self.rrip_values[block_id] = self.RRIP_INSERT_RRPV
+        if block_id not in self.id_to_first_access:
+            self.id_to_first_access[block_id] = last_accessed
         score = self.calc_score(block_id, last_accessed, cache_hint)
         # print("add: ", block_id, cache_hint)
         self.free_table[block_id] = BlockMetaData(content_hash,
@@ -258,8 +260,6 @@ class LRUMLEvictor(Evictor):
                                                   score)
         self.sorted_dict[(score, last_accessed, block_id)] = (block_id, content_hash)
         self.id_to_last_access[cache_hint['id']] = last_accessed
-        if block_id not in self.id_to_first_access:
-            self.id_to_first_access[block_id] = last_accessed
         if time.time() - self.last_refresh_time > self.INSPECT_INTERVAL:
             self._refresh()
 
