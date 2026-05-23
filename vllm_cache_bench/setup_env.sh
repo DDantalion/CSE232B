@@ -89,5 +89,5 @@ if not torch.cuda.is_available() or torch.cuda.device_count() < 1:
 PY
 python run_nips.py
 nohup python collect_policy_metrics.py \
-  --results-dir vllm_cache_bench/results
+  --results-dir results
 echo "Test run complete."
