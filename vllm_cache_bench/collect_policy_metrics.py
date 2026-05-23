@@ -158,10 +158,10 @@ def enrich_metrics_from_result_file(
         return metrics, source
 
     raw_metrics = extract_metrics(raw_result)
-    for metric in missing_metrics(metrics):
-        metrics[metric] = raw_metrics.get(metric)
-
-    if metric_count(metrics) > metric_count(extract_metrics(record)):
+    if has_any_metric(raw_metrics):
+        for metric in METRICS:
+            if raw_metrics.get(metric) is not None:
+                metrics[metric] = raw_metrics[metric]
         return metrics, raw_result_path
     return metrics, source
 
