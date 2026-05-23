@@ -22,6 +22,22 @@ def load_json(path: str) -> Any:
         return json.load(f)
 
 
+def load_sidecar_config(path: str) -> Dict[str, Any]:
+    config_path = f"{path}.config"
+    if not os.path.exists(config_path):
+        return {}
+    try:
+        config = load_json(config_path)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if (isinstance(config, list) and config and
+            isinstance(config[0], dict)):
+        return config[0]
+    if isinstance(config, dict):
+        return config
+    return {}
+
+
 def iter_json_records(path: str) -> Iterable[tuple[str, Dict[str, Any]]]:
     data = load_json(path)
     if isinstance(data, list):
@@ -40,7 +56,8 @@ def iter_result_files(results_dir: str) -> Iterable[str]:
 
 
 def infer_policy(path: str, record: Dict[str, Any]) -> Optional[str]:
-    algorithm = record.get("algorithm")
+    sidecar_config = load_sidecar_config(path)
+    algorithm = record.get("algorithm") or sidecar_config.get("algorithm")
     if isinstance(algorithm, str):
         for policy in POLICIES:
             if algorithm == policy or algorithm.startswith(f"{policy}-"):
@@ -54,7 +71,9 @@ def infer_policy(path: str, record: Dict[str, Any]) -> Optional[str]:
 
 
 def infer_benchmark(path: str, record: Dict[str, Any]) -> str:
-    dataset_name = record.get("dataset_name")
+    sidecar_config = load_sidecar_config(path)
+    dataset_name = record.get("dataset_name") or sidecar_config.get(
+        "dataset_name")
     if isinstance(dataset_name, str) and dataset_name:
         return dataset_name
 
@@ -105,13 +124,62 @@ def extract_metrics(record: Dict[str, Any]) -> Dict[str, Optional[float]]:
     return metrics
 
 
+def missing_metrics(metrics: Dict[str, Optional[float]]) -> List[str]:
+    return [metric for metric, value in metrics.items() if value is None]
+
+
+def resolve_result_file(summary_path: str,
+                        record: Dict[str, Any]) -> Optional[str]:
+    result_file = record.get("result_file")
+    if not isinstance(result_file, str) or not result_file:
+        return None
+
+    if os.path.isabs(result_file):
+        return result_file if os.path.exists(result_file) else None
+
+    candidate = os.path.join(os.path.dirname(summary_path), result_file)
+    return candidate if os.path.exists(candidate) else None
+
+
+def enrich_metrics_from_result_file(
+        source: str, record: Dict[str, Any],
+        metrics: Dict[str, Optional[float]]) -> tuple[Dict[str, Optional[float]],
+                                                      str]:
+    raw_result_path = resolve_result_file(source, record)
+    if raw_result_path is None:
+        return metrics, source
+
+    try:
+        raw_result = load_json(raw_result_path)
+    except (OSError, json.JSONDecodeError):
+        return metrics, source
+
+    if not isinstance(raw_result, dict):
+        return metrics, source
+
+    raw_metrics = extract_metrics(raw_result)
+    for metric in missing_metrics(metrics):
+        metrics[metric] = raw_metrics.get(metric)
+
+    if metric_count(metrics) > metric_count(extract_metrics(record)):
+        return metrics, raw_result_path
+    return metrics, source
+
+
 def has_any_metric(metrics: Dict[str, Optional[float]]) -> bool:
     return any(value is not None for value in metrics.values())
 
 
+def metric_count(record: Dict[str, Any]) -> int:
+    return sum(1 for metric in METRICS if record.get(metric) is not None)
+
+
 def summarize(records: List[Dict[str, Any]], mode: str) -> Dict[str, Any]:
     if mode == "latest":
-        return max(records, key=lambda r: r["mtime"])
+        # exp_*.json summary records are written after raw client JSON files,
+        # but often only contain hit_ratio. Prefer records with more complete
+        # metrics first, then choose the newest among equally complete records.
+        return max(records, key=lambda r: (metric_count(r), r["mtime"]))
 
     summary = {
         "benchmark": records[0]["benchmark"],
@@ -140,14 +208,16 @@ def collect(results_dir: str, mode: str) -> List[Dict[str, Any]]:
                 benchmark = infer_benchmark(source, record)
 
                 metrics = extract_metrics(record)
+                metrics, metric_source = enrich_metrics_from_result_file(
+                    source, record, metrics)
                 if not has_any_metric(metrics):
                     continue
 
                 grouped[(benchmark, policy)].append({
                     "benchmark": benchmark,
                     "policy": policy,
-                    "source": source,
-                    "mtime": os.path.getmtime(source),
+                    "source": metric_source,
+                    "mtime": os.path.getmtime(metric_source),
                     **metrics,
                 })
         except (OSError, json.JSONDecodeError):
