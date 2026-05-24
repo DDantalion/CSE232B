@@ -261,18 +261,65 @@ size `8000` on one H100 GPU:
 | sharegpt | lru | 0.334573 | 2.840481 | 848.422010 | 1205.845568 |
 | sharegpt | ml/LPC | 0.406039 | 2.793798 | 837.231959 | 1189.284579 |
 | sharegpt | rrip | 0.320504 | 2.837320 | 848.041088 | 1205.432825 |
+| sharegpt | scheduler | 0.322933 | 2.750151 | 827.576074 | 1175.259504 |
 | chatbot | fifo | 0.441553 | 10.535377 | 1640.248933 | 2030.162041 |
 | chatbot | lru | 0.446812 | 10.533364 | 1639.518445 | 2029.388466 |
 | chatbot | ml/LPC | 0.446987 | 10.520410 | 1637.553964 | 2026.891773 |
 | chatbot | rrip | 0.448729 | 10.537930 | 1640.603080 | 2030.594933 |
+| chatbot | scheduler | 0.446513 | 10.520986 | 1637.951033 | 2027.378721 |
 | lmsys | fifo | 0.388348 | 4.400751 | 776.207398 | 1053.311897 |
 | lmsys | lru | 0.418865 | 4.424570 | 771.011086 | 1049.713360 |
 | lmsys | ml/LPC | 0.463312 | 4.419360 | 769.977454 | 1048.207036 |
 | lmsys | rrip | 0.431042 | 4.426383 | 769.400127 | 1048.162597 |
+| lmsys | scheduler | 0.412123 | 4.393215 | 762.519974 | 1039.505030 |
 
 These runs show the core motivation for the scheduler: LPC often improves
 `hit_ratio`, but for this 7B model it does not necessarily improve throughput
 because predictor overhead can dominate the saved cache misses.
+
+For these scheduler runs, all three datasets selected the same transition:
+
+```text
+ShareGPT: LPC -> LRU
+LMSYS:    LPC -> LRU
+Chatbot:  LPC -> LRU
+```
+
+The scheduler hit rate is generally competitive with or better than traditional
+policies, because it uses the LPC warmup signal before switching. The full-run
+throughput can still be lower because the reported metrics include the initial
+LPC warmup and shadow-table overhead. For longer-running services, this initial
+cost is amortized; the post-warmup metrics are the better indicator of steady
+state performance.
+
+The following results were collected on `Qwen/Qwen2.5-14B-Instruct` with cache
+size `8000` on one H100 GPU:
+
+| benchmark | policy | hit_ratio | request_throughput | output_throughput | total_token_throughput |
+| --- | --- | ---: | ---: | ---: | ---: |
+| sharegpt | fifo | 0.306906 | 2.666142 | 800.863890 | 1127.491475 |
+| sharegpt | lru | 0.307456 | 2.668905 | 800.866731 | 1129.564181 |
+| sharegpt | ml/LPC | 0.372610 | 2.650327 | 797.018894 | 1121.152915 |
+| sharegpt | rrip | 0.290319 | 2.666042 | 800.646113 | 1127.261509 |
+| sharegpt | scheduler | 0.285845 | 2.590616 | 781.895919 | 1099.733250 |
+| chatbot | fifo | 0.428185 | 10.433887 | 1636.761987 | 2023.657638 |
+| chatbot | lru | 0.440218 | 10.469886 | 1629.628615 | 2017.397726 |
+| chatbot | ml/LPC | 0.471181 | 10.426093 | 1622.299600 | 2008.981581 |
+| chatbot | rrip | 0.443164 | 10.471315 | 1629.404946 | 2017.183264 |
+| chatbot | scheduler | 0.438225 | 10.465983 | 1628.836902 | 2016.587010 |
+| lmsys | fifo | 0.384952 | 4.341077 | 750.662882 | 1023.647948 |
+| lmsys | lru | 0.401723 | 4.336733 | 750.181726 | 1022.893093 |
+| lmsys | ml/LPC | 0.441945 | 4.299962 | 742.450671 | 1013.481006 |
+| lmsys | rrip | 0.409050 | 4.329463 | 748.704961 | 1021.014715 |
+| lmsys | scheduler | 0.396485 | 4.312376 | 744.353676 | 1015.797781 |
+
+For these 14B scheduler runs, all three datasets also selected:
+
+```text
+ShareGPT: LPC -> LRU
+LMSYS:    LPC -> LRU
+Chatbot:  LPC -> LRU
+```
 
 ## Collecting Metrics
 
