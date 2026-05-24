@@ -326,6 +326,20 @@ class CpuGpuBlockAllocator(DeviceAwareBlockAllocator):
         return self._allocators[device].mark_blocks_as_accessed(
             block_ids, now, cache_hint)
 
+    def observe_cache_accesses(self, block_hashes: List[int],
+                               cache_hint: dict) -> None:
+        device = Device.GPU
+        allocator = self._allocators[device]
+        if hasattr(allocator, "observe_cache_accesses"):
+            allocator.observe_cache_accesses(block_hashes, cache_hint)
+
+    def should_predict_cache_hint(self) -> bool:
+        device = Device.GPU
+        allocator = self._allocators[device]
+        if not hasattr(allocator, "should_predict_cache_hint"):
+            return True
+        return allocator.should_predict_cache_hint()
+
     def mark_blocks_as_computed(self, block_ids: List[int]) -> None:
         """Mark blocks as accessed, only use for prefix caching."""
         # Prefix caching only supported on GPU.

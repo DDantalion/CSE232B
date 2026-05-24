@@ -5,10 +5,10 @@ import heapq
 import time
 import statistics
 import numpy as np
-from collections import defaultdict
+from collections import defaultdict, deque
 from sortedcontainers import SortedDict
 from abc import ABC, abstractmethod
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 def probability_of_future_arrival(prob_has_next, exp_scale, elapsed_time, debug=False):
     if prob_has_next == 0 or exp_scale == 0:
@@ -120,6 +120,193 @@ class BlockMetaData:
         self.cache_hint = cache_hint
         self.score = score
 
+
+class ShadowPolicyCache:
+    RRIP_MAX_RRPV = 3
+    RRIP_INSERT_RRPV = RRIP_MAX_RRPV - 1
+    RRIP_HIT_RRPV = 0
+
+    def __init__(self, policy: str, capacity: int):
+        self.policy = policy
+        self.capacity = capacity
+        self.table = {}
+        self.events = deque()
+
+    def set_capacity(self, capacity: int):
+        self.capacity = capacity
+        while len(self.table) > self.capacity:
+            self._evict()
+
+    def hit_rate(self) -> float:
+        if not self.events:
+            return 0.0
+        return sum(hit for _, hit in self.events) / len(self.events)
+
+    def num_events(self) -> int:
+        return len(self.events)
+
+    def access(self, content_hash: int, now: float,
+               cache_hint: Optional[dict] = None):
+        hit = content_hash in self.table
+        self.events.append((now, 1 if hit else 0))
+
+        if hit:
+            entry = self.table[content_hash]
+            entry["last_accessed"] = now
+            entry["cache_hint"] = cache_hint
+            if self.policy == "rrip":
+                entry["rrpv"] = self.RRIP_HIT_RRPV
+            elif self.policy == "ml":
+                entry["score"] = self._ml_score(entry, cache_hint, now)
+            return
+
+        if self.capacity <= 0:
+            return
+        while len(self.table) >= self.capacity:
+            self._evict()
+        self.table[content_hash] = {
+            "first_accessed": now,
+            "last_accessed": now,
+            "rrpv": self.RRIP_INSERT_RRPV,
+            "score": 0.0,
+            "cache_hint": cache_hint,
+        }
+        if self.policy == "ml":
+            self.table[content_hash]["score"] = self._ml_score(
+                self.table[content_hash], cache_hint, now)
+
+    def _ml_score(self, entry: dict, cache_hint: Optional[dict],
+                  now: float) -> float:
+        if cache_hint and "prob_has_next" in cache_hint:
+            return probability_of_future_arrival(
+                cache_hint["prob_has_next"], cache_hint.get("exp_scale", 1),
+                now - entry["last_accessed"])
+        return entry["last_accessed"]
+
+    def _evict(self):
+        if not self.table:
+            return
+        if self.policy == "fifo":
+            victim = min(self.table,
+                         key=lambda h: (self.table[h]["first_accessed"], h))
+        elif self.policy == "rrip":
+            victim = self._rrip_victim()
+        elif self.policy == "ml":
+            now = time.time()
+            victim = min(
+                self.table,
+                key=lambda h: (
+                    self._ml_score(self.table[h],
+                                   self.table[h].get("cache_hint"), now),
+                    self.table[h]["last_accessed"],
+                    h,
+                ))
+        else:
+            victim = min(self.table,
+                         key=lambda h: (self.table[h]["last_accessed"], h))
+        del self.table[victim]
+
+    def _rrip_victim(self):
+        while True:
+            candidates = [
+                h for h, entry in self.table.items()
+                if entry["rrpv"] >= self.RRIP_MAX_RRPV
+            ]
+            if candidates:
+                return min(candidates,
+                           key=lambda h: (self.table[h]["last_accessed"], h))
+            for entry in self.table.values():
+                entry["rrpv"] = min(self.RRIP_MAX_RRPV, entry["rrpv"] + 1)
+
+
+class EvictionPolicyScheduler:
+    POLICIES = ("ml", "lru", "rrip", "fifo")
+    SHADOW_POLICIES = ("lru", "rrip", "fifo")
+
+    def __init__(self, config: dict):
+        self.enabled = self._as_bool(config.get("enable_scheduler", "0"))
+        self.warmup_s = float(config.get("scheduler_warmup", 200))
+        self.min_events = int(config.get("scheduler_min_events", 1000))
+        self.small_threshold = float(
+            config.get("scheduler_small_threshold", 0.10))
+        self.large_threshold = float(
+            config.get("scheduler_large_threshold", 0.05))
+        self.model_size_b = float(config.get("model_size_b", 7))
+        self.current_policy = config.get("scheduler_initial_policy", "ml")
+        self.start_time = time.time()
+        self.finalized = False
+        self.capacity = int(config.get("scheduler_capacity", 0))
+        self.ml_events = deque()
+        self.shadow_caches = {
+            policy: ShadowPolicyCache(policy, self.capacity)
+            for policy in self.SHADOW_POLICIES
+        }
+
+    def _as_bool(self, value) -> bool:
+        return str(value).lower() in ("1", "true", "yes", "on")
+
+    def set_capacity(self, capacity: int):
+        self.capacity = capacity
+        for cache in self.shadow_caches.values():
+            cache.set_capacity(capacity)
+
+    def observe(self, content_hash: int, cache_hint: Optional[dict] = None,
+                real_hit: Optional[bool] = None):
+        if not self.enabled:
+            return
+        now = time.time()
+        if self.finalized:
+            return
+        if real_hit is not None:
+            self.ml_events.append((now, 1 if real_hit else 0))
+        for cache in self.shadow_caches.values():
+            cache.access(content_hash, now, cache_hint)
+        if now - self.start_time >= self.warmup_s:
+            self._finalize_policy(now)
+
+    def should_predict(self) -> bool:
+        if not self.enabled:
+            return True
+        return (not self.finalized) or self.current_policy == "ml"
+
+    def _ml_hit_rate(self) -> float:
+        if not self.ml_events:
+            return 0.0
+        return sum(hit for _, hit in self.ml_events) / len(self.ml_events)
+
+    def _finalize_policy(self, now: float):
+        min_events = min([len(self.ml_events)] + [
+            cache.num_events() for cache in self.shadow_caches.values()
+        ])
+        if min_events == 0:
+            print("scheduler finalize: no warmup events, keep ml")
+            self.current_policy = "ml"
+            self.finalized = True
+            return
+        if min_events < self.min_events:
+            print("scheduler finalize: insufficient warmup events",
+                  min_events, "<", self.min_events)
+
+        hit_rates = {
+            "ml": self._ml_hit_rate(),
+            **{
+                policy: cache.hit_rate()
+                for policy, cache in self.shadow_caches.items()
+            }
+        }
+        best_policy = max(self.POLICIES, key=lambda p: hit_rates[p])
+        best_other = max(
+            hit_rates[p] for p in self.SHADOW_POLICIES)
+        threshold = (self.small_threshold if self.model_size_b <= 7 else
+                     self.large_threshold)
+        if hit_rates["ml"] - best_other >= threshold:
+            best_policy = "ml"
+
+        print("scheduler finalize:",
+              self.current_policy, "->", best_policy, hit_rates)
+        self.current_policy = best_policy
+        self.finalized = True
+
 class LRUMLEvictor(Evictor):
     RRIP_MAX_RRPV = 3
     RRIP_INSERT_RRPV = RRIP_MAX_RRPV - 1
@@ -136,6 +323,7 @@ class LRUMLEvictor(Evictor):
         self.stat = CacheStat()
         self.last_refresh_time = time.time()
         self.INSPECT_INTERVAL = 5
+        self.scheduler = EvictionPolicyScheduler(self.config)
 
     def __contains__(self, block_id: int) -> bool:
         return block_id in self.free_table
@@ -154,9 +342,34 @@ class LRUMLEvictor(Evictor):
             return 'lru'
         if cache_hint.get('use_fifo'):
             return 'fifo'
+        if cache_hint.get('scheduler_policy'):
+            return cache_hint['scheduler_policy']
+        if self.scheduler.enabled:
+            return self.scheduler.current_policy
         if 'next_timestamp' in cache_hint:
             return 'belady'
         return 'ml'
+
+    def set_capacity(self, capacity: int):
+        self.scheduler.set_capacity(capacity)
+
+    def observe_cache_access(self, content_hash: int,
+                             cache_hint: Optional[dict] = None,
+                             real_hit: Optional[bool] = None):
+        self.scheduler.observe(content_hash, cache_hint, real_hit)
+
+    def should_predict_cache_hint(self) -> bool:
+        return self.scheduler.should_predict()
+
+    def _bind_scheduler_policy(self, cache_hint: dict) -> dict:
+        if not self.scheduler.enabled:
+            return cache_hint
+        if (cache_hint.get('use_lru') or cache_hint.get('use_rrip') or
+                cache_hint.get('use_fifo') or cache_hint.get('scheduler_policy')):
+            return cache_hint
+        cache_hint = dict(cache_hint)
+        cache_hint['scheduler_policy'] = self.scheduler.current_policy
+        return cache_hint
 
     def calc_score(self, block_id, last_accessed, cache_hint):
         policy = self.get_policy(cache_hint)
@@ -247,6 +460,7 @@ class LRUMLEvictor(Evictor):
     
     def add(self, block_id: int, content_hash: int, num_hashed_tokens: int,
             last_accessed: float, cache_hint: dict):
+        cache_hint = self._bind_scheduler_policy(cache_hint)
         if self.get_policy(cache_hint) == 'rrip' and block_id not in self.rrip_values:
             self.rrip_values[block_id] = self.RRIP_INSERT_RRPV
         if block_id not in self.id_to_first_access:
@@ -266,6 +480,7 @@ class LRUMLEvictor(Evictor):
     def update(self, block_id: int, last_accessed: float, cache_hint: dict):
         if block_id not in self.free_table:
             raise ValueError("Attempting to update block that's not in the evictor")
+        cache_hint = self._bind_scheduler_policy(cache_hint)
         print("update: ", block_id, cache_hint['turns'])
         self._remove_from_sorted_dict(block_id)
         

@@ -157,6 +157,8 @@ class PrefixCachingBlockAllocator(BlockAllocator):
         self.eviction_algorithm = eviction_algorithm
         self.eviction_algorithm_config = eviction_algorithm_config
         self.evictor: Evictor = make_evictor(eviction_algorithm, eviction_algorithm_config)
+        if hasattr(self.evictor, "set_capacity"):
+            self.evictor.set_capacity(num_blocks)
         if eviction_algorithm != 'lru':
             # Start the worker thread
             self.t_predictor_thread = threading.Thread(target=self.predictor_worker, daemon=True)
@@ -546,6 +548,8 @@ class PrefixCachingBlockAllocator(BlockAllocator):
 
         # Reset the evictor.
         self.evictor = make_evictor(self.eviction_algorithm, self.eviction_algorithm_config)
+        if hasattr(self.evictor, "set_capacity"):
+            self.evictor.set_capacity(self.get_num_total_blocks())
 
         # Reset the block tracker.
         for block_id in self._block_tracker:
@@ -655,6 +659,19 @@ class PrefixCachingBlockAllocator(BlockAllocator):
             else:
                 raise ValueError(
                     "Mark block as accessed which is not belonged to GPU")
+
+    def observe_cache_accesses(self, block_hashes: List[int],
+                               cache_hint: dict) -> None:
+        if not hasattr(self.evictor, "observe_cache_access"):
+            return
+        for block_hash in block_hashes:
+            self.evictor.observe_cache_access(
+                block_hash, cache_hint, block_hash in self._cached_blocks)
+
+    def should_predict_cache_hint(self) -> bool:
+        if not hasattr(self.evictor, "should_predict_cache_hint"):
+            return True
+        return self.evictor.should_predict_cache_hint()
 
     def mark_blocks_as_computed(self, block_ids: List[int]) -> None:
         # Mark all touched blocks as computed.
@@ -776,7 +793,6 @@ class PrefixCachingBlockAllocator(BlockAllocator):
         Returns:
             List[int]: The prefix of the `block_hashes` that are cached.
         """
-
         def _block_is_cached(block_hash: PrefixHash) -> bool:
             if block_hash not in self._cached_blocks:
                 return False
@@ -1153,6 +1169,9 @@ class ComputedBlocksTracker:
             return num_computed_tokens_prev
 
         block_hashes = self._seq_id_to_blocks_hashes[seq.seq_id]
+        if hasattr(self._allocator, "observe_cache_accesses"):
+            self._allocator.observe_cache_accesses(block_hashes,
+                                                   seq.cache_hint)
 
         # This is O(logN), where N is the number of blocks.
         num_cached_blocks = len(
@@ -1206,14 +1225,19 @@ class LastAccessBlocksTracker:
 
     def update_cache_hint(self, seq_id: int, cache_hint: dict) -> None:    
         cache_hint['seq_id'] = seq_id
+        should_predict = True
+        if hasattr(self._allocator, "should_predict_cache_hint"):
+            should_predict = self._allocator.should_predict_cache_hint()
+        if not should_predict and 'prob_has_next' not in cache_hint:
+            cache_hint['prob_has_next'] = 0
         if seq_id not in self._seq_cache_hint or self._seq_cache_hint[seq_id] == None:
             self._seq_cache_hint[seq_id] = cache_hint
-            if 'prob_has_next' not in cache_hint:
+            if should_predict and 'prob_has_next' not in cache_hint:
                 to_predict_queue.put(cache_hint)
         else:
             if self._seq_cache_hint[seq_id]['turns'] < cache_hint['turns']:
                 self._seq_cache_hint[seq_id] = cache_hint
-                if 'prob_has_next' not in cache_hint:
+                if should_predict and 'prob_has_next' not in cache_hint:
                     to_predict_queue.put(cache_hint)
 
     def update_blocks_metadata_using_seq_metadata(self, seq_id: int, block_ids: List[int]) -> None:

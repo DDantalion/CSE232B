@@ -87,7 +87,8 @@ if not torch.cuda.is_available() or torch.cuda.device_count() < 1:
     )
     sys.exit(1)
 PY
-python run_nips.py
+# python run_nips.py
+python run_scheduler.py
 nohup python collect_policy_metrics.py \
   --results-dir results
 echo "Test run complete."

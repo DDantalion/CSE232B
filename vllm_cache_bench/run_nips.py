@@ -8,7 +8,13 @@ import re
 import copy
 from constants_nips import *
 
-async def main(sizes, scales, alg, _dataset, tag):
+async def main(sizes,
+               scales,
+               alg,
+               _dataset,
+               tag,
+               client_algorithms=None,
+               server_extra_args=""):
     server_configs = []
     i = 0
     for size in sizes:
@@ -25,6 +31,7 @@ async def main(sizes, scales, alg, _dataset, tag):
                 'scale': scale,
                 'args': f' --port {8000+i} '
                 f' --eviction_algorithm {alg} --max-num-batched-tokens 2048 '
+                f'{server_extra_args} '
             })
             i += 1
 
@@ -66,8 +73,19 @@ async def main(sizes, scales, alg, _dataset, tag):
             'use_oracle': 0,
             'use_token_id': 0,
             'algorithm': 'fifo'
+        },
+        {
+            'num_prompts': 30000,
+            'use_oracle': 0,
+            'use_token_id': 1,
+            'algorithm': 'scheduler'
         }
     ]
+    if client_algorithms is not None:
+        client_config_template = [
+            conf for conf in client_config_template
+            if conf['algorithm'] in client_algorithms
+        ]
 
     client_configs = []
     for conf in client_config_template:
@@ -238,7 +256,7 @@ async def main(sizes, scales, alg, _dataset, tag):
         client_config = copy.deepcopy(client_conf)
         server_config = copy.deepcopy(server_conf)
         server_config['client_algorithm'] = client_config['algorithm']
-        if 'ml' in server_config['client_algorithm']:
+        if server_config['client_algorithm'] in ('ml', 'scheduler'):
             server_config['size'] -= 250 # 2GB
         print("Starting server configuration:", server_config)
         is_ready = await start_server(server_config)
@@ -291,7 +309,7 @@ if __name__ == "__main__":
 # varying cache size
 if __name__ == "__main__":
     for alg in ['ml']:
-        for dataset in ['sharegpt']:
+        for dataset in ['sharegpt', 'lmsys', 'chatbot']:
             for sizes in [[8000]]:
                 for scales in [[1]]:
                     asyncio.run(main(sizes, scales, alg, dataset, 'size++'))
