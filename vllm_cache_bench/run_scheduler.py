@@ -35,7 +35,7 @@ def run() -> None:
     parser.add_argument("--sizes", default="8000")
     parser.add_argument("--scales", default="1")
     parser.add_argument("--tag", default="scheduler++")
-    parser.add_argument("--warmup", type=float, default=200)
+    parser.add_argument("--warmup", type=float, default=100)
     parser.add_argument("--min-events", type=int, default=0)
     parser.add_argument("--small-threshold", type=float, default=0.10)
     parser.add_argument("--large-threshold", type=float, default=0.05)
