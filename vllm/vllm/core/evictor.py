@@ -225,7 +225,7 @@ class EvictionPolicyScheduler:
 
     def __init__(self, config: dict):
         self.enabled = self._as_bool(config.get("enable_scheduler", "0"))
-        self.warmup_s = float(config.get("scheduler_warmup", 20))
+        self.warmup_s = float(config.get("scheduler_warmup", 100))
         self.min_events = int(config.get("scheduler_min_events", 1000))
         self.small_threshold = float(
             config.get("scheduler_small_threshold", 0.10))

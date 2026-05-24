@@ -80,7 +80,7 @@ The implementation supports these eviction policies:
 In the code, the LPC policy is named `ml`.
 
 1. The scheduler initially sets `current_policy = ml`.
-2. During the first `scheduler_warmup = 20` seconds:
+2. During the first `scheduler_warmup = 100` seconds:
    - The real cache uses LPC.
    - The predictor is allowed to compute `prob_has_next`.
    - The scheduler maintains three metadata-only shadow tables to simulate
@@ -127,7 +127,7 @@ gradually as requests continue.
 
 Default scheduler settings:
 
-- Warmup: `20` seconds.
+- Warmup: `100` seconds.
 - Small-model ML threshold: `0.10`.
 - Large-model ML threshold: `0.05`.
 - Models up to and including `14B` are treated as small models.
@@ -176,7 +176,7 @@ sharegpt, lmsys, chatbot
 Useful scheduler options:
 
 ```bash
-python run_scheduler.py --warmup 20
+python run_scheduler.py --warmup 100
 python run_scheduler.py --observe-stride 8
 python run_scheduler.py --datasets sharegpt
 python run_scheduler.py --datasets sharegpt,lmsys,chatbot --sizes 8000 --scales 1
