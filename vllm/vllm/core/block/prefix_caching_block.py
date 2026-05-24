@@ -654,7 +654,6 @@ class PrefixCachingBlockAllocator(BlockAllocator):
             if self._block_tracker[block_id].active:
                 self._block_tracker[block_id].overwrite_block_metadata(now, cache_hint)
             elif block_id in self.evictor:
-                print(f'block {cache_hint} is updated in the evictor')
                 self.evictor.update(block_id, now, cache_hint)
             else:
                 raise ValueError(
@@ -663,6 +662,9 @@ class PrefixCachingBlockAllocator(BlockAllocator):
     def observe_cache_accesses(self, block_hashes: List[int],
                                cache_hint: dict) -> None:
         if not hasattr(self.evictor, "observe_cache_access"):
+            return
+        if (hasattr(self.evictor, "should_observe_cache_accesses") and
+                not self.evictor.should_observe_cache_accesses()):
             return
         for block_hash in block_hashes:
             self.evictor.observe_cache_access(

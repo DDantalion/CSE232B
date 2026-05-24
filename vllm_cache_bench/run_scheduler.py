@@ -22,6 +22,7 @@ def build_scheduler_config(args) -> str:
         "scheduler_min_events": args.min_events,
         "scheduler_small_threshold": args.small_threshold,
         "scheduler_large_threshold": args.large_threshold,
+        "scheduler_observe_stride": args.observe_stride,
         "model_size_b": infer_model_size_b(MODEL),
         "scheduler_initial_policy": args.initial_policy,
     }
@@ -37,6 +38,7 @@ def run() -> None:
     parser.add_argument("--tag", default="scheduler++")
     parser.add_argument("--warmup", type=float, default=20)
     parser.add_argument("--min-events", type=int, default=0)
+    parser.add_argument("--observe-stride", type=int, default=1)
     parser.add_argument("--small-threshold", type=float, default=0.10)
     parser.add_argument("--large-threshold", type=float, default=0.05)
     parser.add_argument(

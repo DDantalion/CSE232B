@@ -236,6 +236,9 @@ class EvictionPolicyScheduler:
         self.start_time = time.time()
         self.finalized = False
         self.capacity = int(config.get("scheduler_capacity", 0))
+        self.observe_stride = max(1, int(config.get(
+            "scheduler_observe_stride", 4)))
+        self.num_observed_accesses = 0
         self.ml_events = deque()
         self.shadow_caches = {
             policy: ShadowPolicyCache(policy, self.capacity)
@@ -256,6 +259,9 @@ class EvictionPolicyScheduler:
             return
         now = time.time()
         if self.finalized:
+            return
+        self.num_observed_accesses += 1
+        if self.num_observed_accesses % self.observe_stride != 0:
             return
         if real_hit is not None:
             self.ml_events.append((now, 1 if real_hit else 0))
@@ -362,6 +368,9 @@ class LRUMLEvictor(Evictor):
 
     def should_predict_cache_hint(self) -> bool:
         return self.scheduler.should_predict()
+
+    def should_observe_cache_accesses(self) -> bool:
+        return self.scheduler.enabled and not self.scheduler.finalized
 
     def _bind_scheduler_policy(self, cache_hint: dict) -> dict:
         if not self.scheduler.enabled:
@@ -483,7 +492,6 @@ class LRUMLEvictor(Evictor):
         if block_id not in self.free_table:
             raise ValueError("Attempting to update block that's not in the evictor")
         cache_hint = self._bind_scheduler_policy(cache_hint)
-        print("update: ", block_id, cache_hint['turns'])
         self._remove_from_sorted_dict(block_id)
         
         if self.get_policy(cache_hint) == 'rrip':
@@ -514,10 +522,7 @@ class LRUMLEvictor(Evictor):
     def _refresh(self):
         self._rebuild_sorted_dict()
 
-        print('num blocks: ', self.num_blocks)
-
         self.last_refresh_time = time.time()
-        stat_ = CacheStat()
         # Create a list of (block_id, survival_time) tuples
         survival_list = [
             (block_id, self.free_table[block_id].cache_hint['id'], self.free_table[block_id].last_accessed)
@@ -538,27 +543,6 @@ class LRUMLEvictor(Evictor):
             if self.id_to_last_access[id] != block.last_accessed:
                 self.to_delete_blocks.append((block_id, block.content_hash, block.last_accessed))
                 to_delete_cnt += 1
-        print("mark outdated blocks cnt: ", to_delete_cnt)
-
-        # Print top 10
-        cnt = 0
-        temp = 0
-        print('Top 10 blocks with oldest last_accessed time:')
-        for block_id, _, _ in survival_list:
-            block = self.free_table[block_id]
-            if block.last_accessed == temp:
-                continue
-            temp = block.last_accessed
-            cnt += 1
-            if cnt > 10:
-                break
-            print(block.cache_hint['true_tta'], block.score, block.last_accessed)
-
-        for block_id in self.free_table:
-            survival_time = time.time() - self.free_table[block_id].last_accessed
-            stat_.append("survival_times", survival_time)
-        print('For all blocks in the cache:')
-        stat_.summary()
 
 class LRUEvictor(Evictor):
     """Evicts in a least-recently-used order using the last_accessed timestamp

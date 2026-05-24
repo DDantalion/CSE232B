@@ -133,11 +133,17 @@ Default scheduler settings:
 - Models up to and including `14B` are treated as small models.
 - Initial policy: `ml`.
 - Minimum event warning threshold: `0`.
+- Shadow-table observe stride: `4`.
 
-`--min-events` is a guard for sample size during warmup. It counts prefix-block
-access observations, not requests. The scheduler still finalizes after warmup;
-if the count is below the threshold, it prints a warning because the selected
-policy may be less stable.
+`--min-events` is a guard for sample size during warmup. It counts sampled
+prefix-block access observations, not requests. The scheduler still finalizes
+after warmup; if the count is below the threshold, it prints a warning because
+the selected policy may be less stable.
+
+`--observe-stride` controls shadow-table sampling during warmup. The default
+`4` means the scheduler updates the warmup hit-rate statistics once every four
+prefix-block access observations. Increasing it reduces warmup overhead, while
+decreasing it makes the shadow hit-rate estimate more exact.
 
 ## Running Benchmarks
 
@@ -171,6 +177,7 @@ Useful scheduler options:
 
 ```bash
 python run_scheduler.py --warmup 20
+python run_scheduler.py --observe-stride 8
 python run_scheduler.py --datasets sharegpt
 python run_scheduler.py --datasets sharegpt,lmsys,chatbot --sizes 8000 --scales 1
 python run_scheduler.py --small-threshold 0.10 --large-threshold 0.05
