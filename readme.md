@@ -1,6 +1,6 @@
 # Setup
 
-This repository extends vLLM prefix caching with multiple cache eviction policies, implements a scheduler for dynamically switching between those policies, and provides benchmark scripts for comparing cache hit rate and serving throughput across conversational workloads.
+This repository extends vLLM prefix caching with multiple cache eviction policies, implements a scheduler for dynamically switching between those policies, and provides benchmark scripts for comparing cache hit rate and serving throughput across conversational workloads. LPC can improve cache hit rate, but on small models its predictor and embedding overhead can reduce actual serving throughput; the scheduler is designed to keep LPC only when its hit-rate gain is large enough to justify that overhead.
 
 ## Cloud Machine Recommendation
 **We recommend using a cloud machine with high-performance GPUs for running these experiments.** We use **[Hyperstack H100](https://console.hyperstack.cloud/deploy-virtual-machine)** for optimal performance. Other cloud options include:
@@ -72,14 +72,32 @@ The implementation supports these eviction policies:
 - `lru`: least recently used.
 - `rrip`: RRIP with an aging loop.
 - `fifo`: first in, first out.
-- `scheduler`: warmup-based dynamic selector over `ml`, `lru`, `rrip`, and
-  `fifo`.
+- `scheduler`: warmup-based dynamic selector over LPC (`ml`), `lru`, `rrip`,
+  and `fifo`.
 
-The scheduler starts with real `ml` for the warmup period. During warmup it
-measures the real ML hit rate and maintains metadata-only shadow tables for
-`lru`, `rrip`, and `fifo`. After warmup, it freezes to the best policy. If the
-selected policy is not `ml`, new cache hints no longer enter the ML predictor
-queue, avoiding continued embedding/prediction overhead.
+## Scheduler Workflow
+
+In the code, the LPC policy is named `ml`.
+
+1. The scheduler initially sets `current_policy = ml`.
+2. During the first `scheduler_warmup = 200` seconds:
+   - The real cache uses LPC.
+   - The predictor is allowed to compute `prob_has_next`.
+   - The scheduler maintains three metadata-only shadow tables to simulate
+     `lru`, `rrip`, and `fifo`.
+   - The LPC hit rate is measured using the real cache hit rate.
+3. After the warmup period ends:
+   - The scheduler compares the real LPC hit rate with the three shadow hit
+     rates.
+   - It selects one final policy and freezes that choice.
+   - If the LPC hit rate is greater than the best shadow hit rate plus the
+     threshold, it chooses LPC. The threshold offsets LPC's predictor overhead.
+   - Otherwise, it chooses the best-performing traditional eviction policy
+     among `lru`, `rrip`, and `fifo`.
+4. After final selection:
+   - If the final policy is not LPC, new requests are no longer enqueued to the
+     predictor.
+   - If the final policy is LPC, the predictor continues to run.
 
 Default scheduler settings:
 
@@ -180,6 +198,30 @@ Experiment summaries are written as:
 ```text
 results/<model>/exp_<benchmark>.json
 ```
+
+## Example Results
+
+The following results were collected on `Qwen/Qwen2.5-7B-Instruct` with cache
+size `8000` on one H100 GPU:
+
+| benchmark | policy | hit_ratio | request_throughput | output_throughput | total_token_throughput |
+| --- | --- | ---: | ---: | ---: | ---: |
+| sharegpt | fifo | 0.333792 | 2.836372 | 847.605603 | 1204.963509 |
+| sharegpt | lru | 0.334573 | 2.840481 | 848.422010 | 1205.845568 |
+| sharegpt | ml/LPC | 0.406039 | 2.793798 | 837.231959 | 1189.284579 |
+| sharegpt | rrip | 0.320504 | 2.837320 | 848.041088 | 1205.432825 |
+| chatbot | fifo | 0.441553 | 10.535377 | 1640.248933 | 2030.162041 |
+| chatbot | lru | 0.446812 | 10.533364 | 1639.518445 | 2029.388466 |
+| chatbot | ml/LPC | 0.446987 | 10.520410 | 1637.553964 | 2026.891773 |
+| chatbot | rrip | 0.448729 | 10.537930 | 1640.603080 | 2030.594933 |
+| lmsys | fifo | 0.388348 | 4.400751 | 776.207398 | 1053.311897 |
+| lmsys | lru | 0.418865 | 4.424570 | 771.011086 | 1049.713360 |
+| lmsys | ml/LPC | 0.463312 | 4.419360 | 769.977454 | 1048.207036 |
+| lmsys | rrip | 0.431042 | 4.426383 | 769.400127 | 1048.162597 |
+
+These runs show the core motivation for the scheduler: LPC often improves
+`hit_ratio`, but for this 7B model it does not necessarily improve throughput
+because predictor overhead can dominate the saved cache misses.
 
 ## Collecting Metrics
 
