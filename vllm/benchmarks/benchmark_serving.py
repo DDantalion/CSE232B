@@ -251,6 +251,50 @@ def calculate_metrics(
     return metrics, actual_output_lens
 
 
+def calculate_post_warmup_throughput(
+    outputs: list[RequestFuncOutput],
+    benchmark_start_time: float,
+    benchmark_duration: float,
+    post_warmup_seconds: float,
+) -> dict[str, Any]:
+    if post_warmup_seconds <= 0:
+        return {}
+
+    post_duration = max(0.0, benchmark_duration - post_warmup_seconds)
+    if post_duration <= 0:
+        return {
+            "post_warmup_seconds": post_warmup_seconds,
+            "post_warmup_duration": 0.0,
+            "post_warmup_completed": 0,
+            "post_warmup_total_input_tokens": 0,
+            "post_warmup_total_output_tokens": 0,
+            "post_warmup_request_throughput": 0.0,
+            "post_warmup_output_throughput": 0.0,
+            "post_warmup_total_token_throughput": 0.0,
+        }
+
+    cutoff = benchmark_start_time + post_warmup_seconds
+    post_outputs = [
+        output for output in outputs
+        if output.success and output.done_time and output.done_time >= cutoff
+    ]
+    total_input = sum(output.prompt_len for output in post_outputs)
+    total_output = sum(output.output_tokens or 0 for output in post_outputs)
+    completed = len(post_outputs)
+
+    return {
+        "post_warmup_seconds": post_warmup_seconds,
+        "post_warmup_duration": post_duration,
+        "post_warmup_completed": completed,
+        "post_warmup_total_input_tokens": total_input,
+        "post_warmup_total_output_tokens": total_output,
+        "post_warmup_request_throughput": completed / post_duration,
+        "post_warmup_output_throughput": total_output / post_duration,
+        "post_warmup_total_token_throughput": (
+            total_input + total_output) / post_duration,
+    }
+
+
 async def benchmark(
     backend: str,
     api_url: str,
@@ -271,6 +315,7 @@ async def benchmark(
     goodput_config_dict: dict[str, float],
     max_concurrency: Optional[int],
     lora_modules: Optional[Iterable[str]],
+    post_warmup_seconds: float,
 ):
     if backend in ASYNC_REQUEST_FUNCS:
         request_func = ASYNC_REQUEST_FUNCS[backend]
@@ -450,9 +495,13 @@ async def benchmark(
         goodput_config_dict=goodput_config_dict,
     )
     metrics_url = f"{base_url}/metrics"
+    post_warmup_hit_ratio = None
     response = requests.get(metrics_url)
     for line in response.text.split("\n"):
-        if "gpu_prefix_cache_hit_rate{" in line:
+        if "scheduler_post_warmup_gpu_prefix_cache_hit_rate{" in line:
+            print(line)
+            post_warmup_hit_ratio = line.split(' ')[-1]
+        elif line.startswith("vllm:gpu_prefix_cache_hit_rate{"):
             print(line)
             hit_ratio=line.split(' ')[-1]
 
@@ -491,6 +540,15 @@ async def benchmark(
         "generated_texts": [output.generated_text for output in outputs],
         #"errors": [output.error for output in outputs],
     }
+    result.update(
+        calculate_post_warmup_throughput(
+            outputs=outputs,
+            benchmark_start_time=benchmark_start_time,
+            benchmark_duration=benchmark_duration,
+            post_warmup_seconds=post_warmup_seconds,
+        ))
+    if post_warmup_hit_ratio is not None:
+        result["post_warmup_hit_ratio"] = post_warmup_hit_ratio
 
     def process_one_metric(
         # E.g., "ttft"
@@ -721,6 +779,7 @@ def main(args: argparse.Namespace):
             goodput_config_dict=goodput_config_dict,
             max_concurrency=args.max_concurrency,
             lora_modules=args.lora_modules,
+            post_warmup_seconds=args.post_warmup_seconds,
         ))
 
     # Save config and results to json
@@ -938,6 +997,13 @@ if __name__ == "__main__":
         "--save-result",
         action="store_true",
         help="Specify to save benchmark results to a json file",
+    )
+    parser.add_argument(
+        "--post-warmup-seconds",
+        type=float,
+        default=0.0,
+        help=("If positive, also save throughput metrics for requests "
+              "completed after this many benchmark seconds."),
     )
     parser.add_argument(
         "--metadata",

@@ -122,6 +122,16 @@ class Metrics:
             labelnames=labelnames,
             multiprocess_mode="sum")
 
+        self.gauge_scheduler_post_warmup_gpu_prefix_cache_hit_rate = (
+            self._gauge_cls(
+                name=("vllm:scheduler_post_warmup_"
+                      "gpu_prefix_cache_hit_rate"),
+                documentation=(
+                    "GPU prefix cache block hit rate measured after the "
+                    "scheduler warmup period."),
+                labelnames=labelnames,
+                multiprocess_mode="sum"))
+
         # Iteration stats
         self.counter_num_preemption = self._counter_cls(
             name="vllm:num_preemptions_total",
@@ -592,6 +602,10 @@ class PrometheusStatLogger(StatLoggerBase):
                         stats.cpu_prefix_cache_hit_rate)
         self._log_gauge(self.metrics.gauge_gpu_prefix_cache_hit_rate,
                         stats.gpu_prefix_cache_hit_rate)
+        self._log_gauge(
+            self.metrics.
+            gauge_scheduler_post_warmup_gpu_prefix_cache_hit_rate,
+            stats.scheduler_post_warmup_gpu_prefix_cache_hit_rate)
         # Including max-lora in metric, in future this property of lora
         # config maybe extended to be dynamic.
         lora_info = {

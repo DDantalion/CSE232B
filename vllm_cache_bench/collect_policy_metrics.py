@@ -14,6 +14,10 @@ METRICS = (
     "request_throughput",
     "output_throughput",
     "total_token_throughput",
+    "post_warmup_hit_ratio",
+    "post_warmup_request_throughput",
+    "post_warmup_output_throughput",
+    "post_warmup_total_token_throughput",
 )
 
 

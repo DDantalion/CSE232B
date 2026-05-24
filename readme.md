@@ -107,23 +107,21 @@ cache uses LPC, while `lru`, `rrip`, and `fifo` are simulated with lightweight
 metadata-only shadow tables keyed by prefix block hash.
 
 When warmup ends, the scheduler performs a single policy switch and freezes the
-choice. The existing KV cache contents are not flushed or rebuilt. Existing
-cached blocks keep their current metadata, and new or updated blocks are tagged
-with the selected policy as they re-enter the evictor. This makes the switch
-gradual rather than a full cache reset.
+choice. The existing KV cache contents are not flushed or rebuilt. Instead, the
+evictor immediately rebinds the metadata of existing cached blocks to the final
+policy and rebuilds the eviction ordering. This avoids old LPC-scored blocks
+being protected indefinitely after switching to `lru`, `rrip`, or `fifo`.
 
 As a result, switching cost is mainly:
 
 - Maintaining three metadata-only shadow tables during warmup.
 - Computing the final hit-rate comparison once.
-- Updating policy metadata for blocks as they are added or refreshed after the
-  switch.
+- Rebinding existing block metadata once and rebuilding the eviction ordering
+  after the switch.
 
 If the selected final policy is not LPC, the system stops enqueuing new cache
 hints to the predictor, so the ongoing embedding/prediction overhead is removed
-after warmup. The tradeoff is that the cache may contain blocks admitted under
-the warmup LPC policy for some time, so the post-switch behavior converges
-gradually as requests continue.
+after warmup.
 
 Default scheduler settings:
 
@@ -232,6 +230,26 @@ Experiment summaries are written as:
 results/<model>/exp_<benchmark>.json
 ```
 
+For scheduler runs, the client JSON contains both full-run metrics and
+post-warmup metrics. The full-run fields include warmup:
+
+```text
+hit_ratio
+request_throughput
+output_throughput
+total_token_throughput
+```
+
+The post-warmup fields exclude the first `--warmup` seconds for throughput and
+use the server-side scheduler post-warmup prefix-cache hit counter for hit rate:
+
+```text
+post_warmup_hit_ratio
+post_warmup_request_throughput
+post_warmup_output_throughput
+post_warmup_total_token_throughput
+```
+
 ## Example Results
 
 The following results were collected on `Qwen/Qwen2.5-7B-Instruct` with cache
@@ -271,6 +289,10 @@ The collected metrics are:
 - `request_throughput`
 - `output_throughput`
 - `total_token_throughput`
+- `post_warmup_hit_ratio`
+- `post_warmup_request_throughput`
+- `post_warmup_output_throughput`
+- `post_warmup_total_token_throughput`
 
 Filter one benchmark:
 

@@ -254,21 +254,22 @@ class EvictionPolicyScheduler:
             cache.set_capacity(capacity)
 
     def observe(self, content_hash: int, cache_hint: Optional[dict] = None,
-                real_hit: Optional[bool] = None):
+                real_hit: Optional[bool] = None) -> bool:
         if not self.enabled:
-            return
+            return False
         now = time.time()
         if self.finalized:
-            return
+            return False
         self.num_observed_accesses += 1
         if self.num_observed_accesses % self.observe_stride != 0:
-            return
+            return False
         if real_hit is not None:
             self.ml_events.append((now, 1 if real_hit else 0))
         for cache in self.shadow_caches.values():
             cache.access(content_hash, now, cache_hint)
         if now - self.start_time >= self.warmup_s:
-            self._finalize_policy(now)
+            return self._finalize_policy(now)
+        return False
 
     def should_predict(self) -> bool:
         if not self.enabled:
@@ -280,7 +281,7 @@ class EvictionPolicyScheduler:
             return 0.0
         return sum(hit for _, hit in self.ml_events) / len(self.ml_events)
 
-    def _finalize_policy(self, now: float):
+    def _finalize_policy(self, now: float) -> bool:
         min_events = min([len(self.ml_events)] + [
             cache.num_events() for cache in self.shadow_caches.values()
         ])
@@ -288,7 +289,7 @@ class EvictionPolicyScheduler:
             print("scheduler finalize: no warmup events, keep ml")
             self.current_policy = "ml"
             self.finalized = True
-            return
+            return True
         if min_events < self.min_events:
             print("scheduler finalize: insufficient warmup events",
                   min_events, "<", self.min_events)
@@ -314,6 +315,7 @@ class EvictionPolicyScheduler:
               self.current_policy, "->", best_policy, hit_rates)
         self.current_policy = best_policy
         self.finalized = True
+        return True
 
 class LRUMLEvictor(Evictor):
     RRIP_MAX_RRPV = 3
@@ -364,13 +366,19 @@ class LRUMLEvictor(Evictor):
     def observe_cache_access(self, content_hash: int,
                              cache_hint: Optional[dict] = None,
                              real_hit: Optional[bool] = None):
-        self.scheduler.observe(content_hash, cache_hint, real_hit)
+        finalized_now = self.scheduler.observe(content_hash, cache_hint,
+                                               real_hit)
+        if finalized_now:
+            self._rebind_scheduler_policy_for_existing_blocks()
 
     def should_predict_cache_hint(self) -> bool:
         return self.scheduler.should_predict()
 
     def should_observe_cache_accesses(self) -> bool:
         return self.scheduler.enabled and not self.scheduler.finalized
+
+    def should_record_post_warmup_metric(self) -> bool:
+        return self.scheduler.enabled and self.scheduler.finalized
 
     def _bind_scheduler_policy(self, cache_hint: dict) -> dict:
         if not self.scheduler.enabled:
@@ -381,6 +389,25 @@ class LRUMLEvictor(Evictor):
         cache_hint = dict(cache_hint)
         cache_hint['scheduler_policy'] = self.scheduler.current_policy
         return cache_hint
+
+    def _rebind_scheduler_policy_for_existing_blocks(self) -> None:
+        if not self.scheduler.enabled:
+            return
+        final_policy = self.scheduler.current_policy
+        self.rrip_values.clear()
+        for block_id, block in self.free_table.items():
+            cache_hint = dict(block.cache_hint)
+            cache_hint.pop('use_lru', None)
+            cache_hint.pop('use_rrip', None)
+            cache_hint.pop('use_fifo', None)
+            cache_hint['scheduler_policy'] = final_policy
+            block.cache_hint = cache_hint
+            if final_policy == 'rrip':
+                self.rrip_values[block_id] = self.RRIP_INSERT_RRPV
+        self.to_delete_blocks.clear()
+        self._rebuild_sorted_dict()
+        print("scheduler rebound existing blocks to", final_policy,
+              "count", len(self.free_table))
 
     def calc_score(self, block_id, last_accessed, cache_hint):
         policy = self.get_policy(cache_hint)

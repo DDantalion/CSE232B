@@ -362,6 +362,15 @@ class CpuGpuBlockAllocator(DeviceAwareBlockAllocator):
         assert device in self._allocators
         return self._allocators[device].get_prefix_cache_hit_rate()
 
+    def get_scheduler_post_warmup_prefix_cache_hit_rate(
+            self, device: Device) -> float:
+        assert device in self._allocators
+        allocator = self._allocators[device]
+        if not hasattr(allocator,
+                       "get_scheduler_post_warmup_prefix_cache_hit_rate"):
+            return -1.
+        return allocator.get_scheduler_post_warmup_prefix_cache_hit_rate()
+
     def reset_prefix_cache(self) -> bool:
         """Reset prefix cache for all devices."""
         success = True

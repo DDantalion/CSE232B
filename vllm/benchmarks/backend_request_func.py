@@ -609,6 +609,7 @@ async def async_request_openai_chat_completions(
                     update_conversation(request_func_input.conversation_id, generated_text, generated_tokens)
                     output.success = True
                     output.latency = most_recent_timestamp - st
+                    output.done_time = most_recent_timestamp
                     #print(request_func_input.conversation_id, request_func_input.turn_id,
                     #    len(output.itl), request_func_input.output_len, output.latency)
                 else:

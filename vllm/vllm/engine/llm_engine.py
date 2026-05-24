@@ -1676,6 +1676,12 @@ class LLMEngine:
             0].get_prefix_cache_hit_rate(Device.CPU)
         gpu_prefix_cache_hit_rate = self.scheduler[
             0].get_prefix_cache_hit_rate(Device.GPU)
+        scheduler_post_warmup_gpu_prefix_cache_hit_rate = -1.
+        if hasattr(
+                self.scheduler[0],
+                "get_scheduler_post_warmup_prefix_cache_hit_rate"):
+            scheduler_post_warmup_gpu_prefix_cache_hit_rate = self.scheduler[
+                0].get_scheduler_post_warmup_prefix_cache_hit_rate(Device.GPU)
 
         # Iteration stats
         num_prompt_tokens_iter = 0
@@ -1863,6 +1869,8 @@ class LLMEngine:
             #   Prefix Cache Hit Rate
             cpu_prefix_cache_hit_rate=cpu_prefix_cache_hit_rate,
             gpu_prefix_cache_hit_rate=gpu_prefix_cache_hit_rate,
+            scheduler_post_warmup_gpu_prefix_cache_hit_rate=(
+                scheduler_post_warmup_gpu_prefix_cache_hit_rate),
 
             # Iteration stats
             num_prompt_tokens_iter=num_prompt_tokens_iter,

@@ -636,6 +636,14 @@ class Scheduler:
     def get_prefix_cache_hit_rate(self, device: Device) -> float:
         return self.block_manager.get_prefix_cache_hit_rate(device)
 
+    def get_scheduler_post_warmup_prefix_cache_hit_rate(
+            self, device: Device) -> float:
+        if not hasattr(self.block_manager,
+                       "get_scheduler_post_warmup_prefix_cache_hit_rate"):
+            return -1.
+        return self.block_manager.get_scheduler_post_warmup_prefix_cache_hit_rate(
+            device)
+
     def reset_prefix_cache(self) -> bool:
         return self.block_manager.reset_prefix_cache()
 

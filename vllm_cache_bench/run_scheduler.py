@@ -64,6 +64,7 @@ def run() -> None:
                 args.tag,
                 client_algorithms=["scheduler"],
                 server_extra_args=server_extra_args,
+                post_warmup_seconds=args.warmup,
             ))
 
 

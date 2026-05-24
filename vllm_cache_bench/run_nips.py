@@ -14,7 +14,8 @@ async def main(sizes,
                _dataset,
                tag,
                client_algorithms=None,
-               server_extra_args=""):
+               server_extra_args="",
+               post_warmup_seconds=0):
     server_configs = []
     i = 0
     for size in sizes:
@@ -197,7 +198,9 @@ async def main(sizes,
             port, result_filename, num_prompts, request_rate, session_rate,
             checkpoint, use_oracle, use_token_id, use_lru, use_rrip,
             use_fifo, max_active_conversations,
-            time_limit
+            time_limit,
+            post_warmup_seconds if client_config['algorithm'] == 'scheduler'
+            else 0,
         )
         client_cmd = f'{server_config["cuda_devices"]} {client_cmd}'
         

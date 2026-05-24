@@ -34,6 +34,7 @@ CLIENT_CMD_TEMPLATE = (
     "--use-rrip {} --use-fifo {} "
     "--max-active-conversations {} "
     "--time-limit {} "
+    "--post-warmup-seconds {} "
 )
 
 SERVER_READY_PATTERN = r"startup complete"

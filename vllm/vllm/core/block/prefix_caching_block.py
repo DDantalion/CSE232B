@@ -173,6 +173,7 @@ class PrefixCachingBlockAllocator(BlockAllocator):
             refcounter=self._refcounter.as_readonly())
 
         self.metric_data = CacheMetricData()
+        self.scheduler_post_warmup_metric_data = CacheMetricData()
 
     def predictor_worker(self):
         predictor_cache = {}
@@ -252,10 +253,12 @@ class PrefixCachingBlockAllocator(BlockAllocator):
             if DEBUG_CACHE:
                 print('hit: ', hit_block.block_id, hit_block.token_ids)
             self.metric_data.query(hit=True)
+            self._query_scheduler_post_warmup_metric(hit=True)
             block.block_id = cached_block_id
             self._incr_refcount_cached_block(block)
             return block
         self.metric_data.query(hit=False)
+        self._query_scheduler_post_warmup_metric(hit=False)
         self._block_pool.free_block(block)
 
         # No cached block => Allocate a new block
@@ -518,6 +521,19 @@ class PrefixCachingBlockAllocator(BlockAllocator):
             print('Number of reusable blocks in the cache: ', len(self.evictor.free_table))
         return self.metric_data.get_hit_rate()
 
+    def _query_scheduler_post_warmup_metric(self, hit: bool) -> None:
+        if not hasattr(self.evictor, "should_record_post_warmup_metric"):
+            return
+        if self.evictor.should_record_post_warmup_metric():
+            self.scheduler_post_warmup_metric_data.query(hit=hit)
+
+    def get_scheduler_post_warmup_prefix_cache_hit_rate(self) -> float:
+        if not hasattr(self.evictor, "should_record_post_warmup_metric"):
+            return -1.
+        if not self.evictor.should_record_post_warmup_metric():
+            return -1.
+        return self.scheduler_post_warmup_metric_data.get_hit_rate()
+
     def reset_prefix_cache(self) -> bool:
         """Reset prefix cache. This function may be used in RLHF
         flows to invalid prefix caching after the weights are updated,
@@ -529,6 +545,7 @@ class PrefixCachingBlockAllocator(BlockAllocator):
         """
         # Reset the metrics.
         self.metric_data = CacheMetricData()
+        self.scheduler_post_warmup_metric_data = CacheMetricData()
         # return True
         num_used_blocks = (self.get_num_total_blocks() -
                            self.get_num_free_blocks())
