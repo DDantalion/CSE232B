@@ -297,7 +297,7 @@ class EvictionPolicyScheduler:
         best_policy = max(self.POLICIES, key=lambda p: hit_rates[p])
         best_other = max(
             hit_rates[p] for p in self.SHADOW_POLICIES)
-        threshold = (self.small_threshold if self.model_size_b <= 7 else
+        threshold = (self.small_threshold if self.model_size_b <= 14 else
                      self.large_threshold)
         if hit_rates["ml"] - best_other >= threshold:
             best_policy = "ml"

@@ -9,6 +9,13 @@ This repository extends vLLM prefix caching with multiple cache eviction policie
 - Lambda Labs
 - Paperspace
 
+Our experiments were run on one H100 GPU with:
+
+```text
+Driver Version: 570.195.03
+CUDA Version: 12.8
+```
+
 ## Quick Setup on Cloud Machine
 Run the setup script from `server.sh` to automatically install dependencies and configure the environment:
 
@@ -79,6 +86,7 @@ Default scheduler settings:
 - Warmup: `200` seconds.
 - Small-model ML threshold: `0.10`.
 - Large-model ML threshold: `0.05`.
+- Models up to and including `14B` are treated as small models.
 - Initial policy: `ml`.
 - Minimum event warning threshold: `0`.
 
