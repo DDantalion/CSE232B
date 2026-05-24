@@ -99,6 +99,32 @@ In the code, the LPC policy is named `ml`.
      predictor.
    - If the final policy is LPC, the predictor continues to run.
 
+## Policy Switching Cost
+
+The scheduler is designed to avoid expensive cache-state rebuilds during policy
+selection. It does not maintain four real KV caches. During warmup, the real
+cache uses LPC, while `lru`, `rrip`, and `fifo` are simulated with lightweight
+metadata-only shadow tables keyed by prefix block hash.
+
+When warmup ends, the scheduler performs a single policy switch and freezes the
+choice. The existing KV cache contents are not flushed or rebuilt. Existing
+cached blocks keep their current metadata, and new or updated blocks are tagged
+with the selected policy as they re-enter the evictor. This makes the switch
+gradual rather than a full cache reset.
+
+As a result, switching cost is mainly:
+
+- Maintaining three metadata-only shadow tables during warmup.
+- Computing the final hit-rate comparison once.
+- Updating policy metadata for blocks as they are added or refreshed after the
+  switch.
+
+If the selected final policy is not LPC, the system stops enqueuing new cache
+hints to the predictor, so the ongoing embedding/prediction overhead is removed
+after warmup. The tradeoff is that the cache may contain blocks admitted under
+the warmup LPC policy for some time, so the post-switch behavior converges
+gradually as requests continue.
+
 Default scheduler settings:
 
 - Warmup: `200` seconds.
