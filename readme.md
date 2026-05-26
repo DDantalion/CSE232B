@@ -21,7 +21,7 @@ Run the setup script from `server.sh` to automatically install dependencies and 
 
 ```bash
 # Run the server.sh setup script
-wget https://raw.githubusercontent.com/DDantalion/CSE232B/main/server.sh
+wget https://raw.githubusercontent.com/DDantalion/CSE232B/RRIP/server.sh
 sudo su
 bash server.sh
 ```
